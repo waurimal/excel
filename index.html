@@ -81,19 +81,19 @@
                 const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
                 
                 let studentsMap = new Map();
-                let areasSet = new Set();
+                let headerAreas = [];
                 
                 let currentNo = "";
                 let currentName = "";
                 let currentArea = "";
                 let startParsing = false;
+                let studentAreaIndex = 0; // 한 학생의 몇 번째 평가 줄인지 추적
 
                 for (let i = 0; i < rows.length; i++) {
                     const row = rows[i];
                     if (!row || row.length === 0) continue;
 
-                    // 헤더(반/번호)가 나타난 이후부터 데이터 처리 시작
-                    let col0 = String(row[0]).replace(/\s/g, '');
+                    let col0 = row[0] != null ? String(row[0]).replace(/\s/g, '') : "";
                     if (col0.includes('반/번호')) {
                         startParsing = true;
                         continue;
@@ -101,43 +101,61 @@
 
                     if (!startParsing) continue;
                     
-                    let no = String(row[0]).trim();
-                    let name = String(row[1]).trim();
-                    let area = String(row[2]).trim();
-                    let level = String(row[5]).trim(); // 인덱스 5번이 '단계' 열 (매우잘함, 잘함 등)
+                    let no = row[0] != null ? String(row[0]).trim() : "";
+                    let name = row[1] != null ? String(row[1]).trim() : "";
+                    let area = row[2] != null ? String(row[2]).trim() : "";
+                    let level = row[5] != null ? String(row[5]).trim() : ""; // 인덱스 5번이 '단계' 열 (매우잘함, 잘함 등)
                     
                     // 셀 병합으로 인해 번호/이름이 비어있는 행이 있더라도 이전 값을 유지하여 엇갈림 방지
                     if (no !== "") currentNo = no;
                     if (name !== "") currentName = name;
                     
+                    // 영역 병합 대응
+                    if (area !== "") currentArea = area;
+                    
+                    // 빈 행(단순 여백) 무시
+                    let isRowEmpty = no === "" && name === "" && area === "" && (row[3] == null || String(row[3]).trim() === "") && level === "";
+                    if (isRowEmpty) continue;
+
                     // 유효한 학생 데이터가 파악되었을 때
                     if (currentNo && currentName) {
                         let studentKey = currentNo + "_" + currentName;
-                        if (!studentsMap.has(studentKey)) {
-                            studentsMap.set(studentKey, { no: currentNo, name: currentName, areas: {} });
-                        }
                         
-                        // 새로운 영역이 등장하면 현재 영역을 업데이트하고 전체 영역 목록에 수집
-                        if (area !== "") {
-                            currentArea = area;
-                            areasSet.add(area);
+                        if (!studentsMap.has(studentKey)) {
+                            studentsMap.set(studentKey, { no: currentNo, name: currentName, levels: [] });
                         }
 
-                        // '단계' 값이 존재하면 해당 학생의 현재 영역에 기록
-                        if (level !== "" && currentArea !== "") {
-                            let student = studentsMap.get(studentKey);
-                            // 여러 줄에 걸쳐 중복된 영역값이 있을 수 있으므로 첫 번째 등장 값만 저장
-                            if (!student.areas[currentArea]) {
-                                student.areas[currentArea] = level;
-                            }
+                        // 번호/이름이 적혀있는 줄이라면(새로운 학생의 시작줄) 인덱스 0으로 초기화
+                        if (no !== "" && name !== "") {
+                            studentAreaIndex = 0;
                         }
+                        
+                        let student = studentsMap.get(studentKey);
+                        
+                        // 헤더(영역) 등록 (순서대로 나열하여 여러 평가를 모두 포용)
+                        if (headerAreas.length <= studentAreaIndex) {
+                            headerAreas.push(currentArea || `영역${studentAreaIndex + 1}`);
+                        }
+                        
+                        // 단계 기록
+                        student.levels[studentAreaIndex] = level;
+                        studentAreaIndex++;
                     }
                 }
 
-                const areaList = Array.from(areasSet);
+                // 중복되는 영역 이름(예: 표현, 표현)이 있을 경우 "표현 1", "표현 2" 등으로 번호 부여
+                let finalHeaders = headerAreas.map((area, idx) => {
+                    let count = headerAreas.filter(a => a === area).length;
+                    if (count > 1) {
+                        let occurrence = headerAreas.slice(0, idx + 1).filter(a => a === area).length;
+                        return `${area} ${occurrence}`;
+                    }
+                    return area;
+                });
+
                 transformedData = {
                     students: Array.from(studentsMap.values()),
-                    areas: areaList
+                    areas: finalHeaders
                 };
 
                 renderPreview();
@@ -174,8 +192,9 @@
                     <td class="px-4 py-3 font-medium text-slate-900">${student.name}</td>
                 `;
                 
-                transformedData.areas.forEach(area => {
-                    const levelVal = student.areas[area] || '';
+                // 데이터 순서(인덱스)에 맞춰 매핑하여 중복 데이터 유실 방지
+                transformedData.areas.forEach((area, index) => {
+                    const levelVal = student.levels[index] || '';
                     rowHTML += `<td class="px-4 py-3">${levelVal}</td>`;
                 });
                 
@@ -200,8 +219,8 @@
             // 데이터 행 작성
             transformedData.students.forEach(student => {
                 let row = [student.no, student.name];
-                transformedData.areas.forEach(area => {
-                    let val = student.areas[area] || '';
+                transformedData.areas.forEach((area, index) => {
+                    let val = student.levels[index] || '';
                     // 쉼표나 줄바꿈이 있을 경우를 대비해 쌍따옴표 래핑
                     val = `"${val.replace(/"/g, '""')}"`;
                     row.push(val);
@@ -234,8 +253,8 @@
             // 데이터 행
             transformedData.students.forEach(student => {
                 let row = [student.no, student.name];
-                transformedData.areas.forEach(area => {
-                    row.push(student.areas[area] || '');
+                transformedData.areas.forEach((area, index) => {
+                    row.push(student.levels[index] || '');
                 });
                 ws_data.push(row);
             });
