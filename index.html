@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>학생 평가결과 데이터 변환기</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.292.0/lucide.min.css" rel="stylesheet">
+    <!-- SheetJS 라이브러리 추가 (엑셀 파일 읽기 용도) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+</head>
+<body class="bg-slate-50 min-h-screen p-6 font-sans">
+    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
+        <h1 class="text-2xl font-bold text-slate-800 mb-2">학생 교과평가 변환기</h1>
+        <p class="text-slate-500 mb-8">나이스(NEIS) 양식 등에 맞게 두 줄로 나뉜 평가 데이터를 한 줄로 합쳐줍니다.</p>
+
+        <!-- 업로드 섹션 -->
+        <div class="mb-8 p-6 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 text-center">
+            <label class="block mb-4">
+                <span class="sr-only">엑셀 파일 선택</span>
+                <input type="file" id="fileInput" accept=".xlsx, .xls" class="block w-full text-sm text-slate-500
+                    file:mr-4 file:py-2.5 file:px-6
+                    file:rounded-full file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-blue-50 file:text-blue-700
+                    hover:file:bg-blue-100 cursor-pointer
+                "/>
+            </label>
+            <div class="flex items-center justify-center gap-4 text-sm text-slate-600">
+                <span class="text-slate-500">※ 나이스에서 다운로드한 원본 엑셀(.xlsx) 파일을 그대로 올려주세요.</span>
+            </div>
+        </div>
+
+        <!-- 결과 미리보기 섹션 -->
+        <div id="resultSection" class="hidden">
+            <div class="flex justify-between items-end mb-4">
+                <h2 class="text-lg font-semibold text-slate-800">변환 미리보기</h2>
+                <div class="flex gap-2">
+                    <button id="downloadCsvBtn" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm">
+                        CSV 다운로드
+                    </button>
+                    <button id="downloadExcelBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm">
+                        엑셀(XLSX) 다운로드
+                    </button>
+                </div>
+            </div>
+            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+                <table class="w-full text-sm text-left text-slate-600">
+                    <thead class="text-xs text-slate-700 uppercase bg-slate-100 border-b border-slate-200" id="previewHead">
+                        <!-- 헤더가 동적으로 생성됩니다 -->
+                    </thead>
+                    <tbody id="previewBody" class="divide-y divide-slate-200">
+                        <!-- 데이터가 여기에 렌더링 됩니다 -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let transformedData = { students: [], areas: [] };
+
+        // 파일 처리 로직 (SheetJS 사용)
+        function processFile() {
+            const fileInput = document.getElementById('fileInput');
+            
+            if (!fileInput.files.length) return;
+            const file = fileInput.files[0];
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                // 엑셀 파일 읽기
+                const workbook = XLSX.read(data, {type: 'array'});
+                
+                // 첫 번째 시트 선택
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                
+                // 시트 데이터를 2차원 배열로 변환 (빈 셀은 빈 문자열로 처리)
+                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
+                
+                let studentsMap = new Map();
+                let areasSet = new Set();
+                
+                let currentNo = "";
+                let currentName = "";
+                let currentArea = "";
+                let startParsing = false;
+
+                for (let i = 0; i < rows.length; i++) {
+                    const row = rows[i];
+                    if (!row || row.length === 0) continue;
+
+                    // 헤더(반/번호)가 나타난 이후부터 데이터 처리 시작
+                    let col0 = String(row[0]).replace(/\s/g, '');
+                    if (col0.includes('반/번호')) {
+                        startParsing = true;
+                        continue;
+                    }
+
+                    if (!startParsing) continue;
+                    
+                    let no = String(row[0]).trim();
+                    let name = String(row[1]).trim();
+                    let area = String(row[2]).trim();
+                    let level = String(row[5]).trim(); // 인덱스 5번이 '단계' 열 (매우잘함, 잘함 등)
+                    
+                    // 셀 병합으로 인해 번호/이름이 비어있는 행이 있더라도 이전 값을 유지하여 엇갈림 방지
+                    if (no !== "") currentNo = no;
+                    if (name !== "") currentName = name;
+                    
+                    // 유효한 학생 데이터가 파악되었을 때
+                    if (currentNo && currentName) {
+                        let studentKey = currentNo + "_" + currentName;
+                        if (!studentsMap.has(studentKey)) {
+                            studentsMap.set(studentKey, { no: currentNo, name: currentName, areas: {} });
+                        }
+                        
+                        // 새로운 영역이 등장하면 현재 영역을 업데이트하고 전체 영역 목록에 수집
+                        if (area !== "") {
+                            currentArea = area;
+                            areasSet.add(area);
+                        }
+
+                        // '단계' 값이 존재하면 해당 학생의 현재 영역에 기록
+                        if (level !== "" && currentArea !== "") {
+                            let student = studentsMap.get(studentKey);
+                            // 여러 줄에 걸쳐 중복된 영역값이 있을 수 있으므로 첫 번째 등장 값만 저장
+                            if (!student.areas[currentArea]) {
+                                student.areas[currentArea] = level;
+                            }
+                        }
+                    }
+                }
+
+                const areaList = Array.from(areasSet);
+                transformedData = {
+                    students: Array.from(studentsMap.values()),
+                    areas: areaList
+                };
+
+                renderPreview();
+            };
+            
+            reader.readAsArrayBuffer(file); // 엑셀 파일은 ArrayBuffer로 읽어야 함
+        }
+
+        // 미리보기 테이블 렌더링
+        function renderPreview() {
+            const thead = document.getElementById('previewHead');
+            const tbody = document.getElementById('previewBody');
+            
+            // 헤더 동적 생성
+            let headerHTML = `
+                <tr>
+                    <th scope="col" class="px-4 py-3 whitespace-nowrap">번호</th>
+                    <th scope="col" class="px-4 py-3 whitespace-nowrap">성명</th>
+            `;
+            transformedData.areas.forEach(area => {
+                headerHTML += `<th scope="col" class="px-4 py-3">${area}</th>`;
+            });
+            headerHTML += `</tr>`;
+            thead.innerHTML = headerHTML;
+
+            // 바디 동적 생성
+            tbody.innerHTML = '';
+            transformedData.students.forEach(student => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-slate-50';
+                
+                let rowHTML = `
+                    <td class="px-4 py-3 font-medium text-slate-900">${student.no}</td>
+                    <td class="px-4 py-3 font-medium text-slate-900">${student.name}</td>
+                `;
+                
+                transformedData.areas.forEach(area => {
+                    const levelVal = student.areas[area] || '';
+                    rowHTML += `<td class="px-4 py-3">${levelVal}</td>`;
+                });
+                
+                tr.innerHTML = rowHTML;
+                tbody.appendChild(tr);
+            });
+
+            document.getElementById('resultSection').classList.remove('hidden');
+        }
+
+        // 다운로드 로직
+        function downloadCSV() {
+            if (transformedData.students.length === 0) return;
+
+            // 엑셀 한글 깨짐 방지용 BOM 추가
+            let csvContent = "\uFEFF"; 
+            
+            // 헤더 행 작성 (영역 개수에 맞춰 동적 생성)
+            let headerRow = ["번호", "성명", ...transformedData.areas];
+            csvContent += headerRow.join(',') + "\n";
+
+            // 데이터 행 작성
+            transformedData.students.forEach(student => {
+                let row = [student.no, student.name];
+                transformedData.areas.forEach(area => {
+                    let val = student.areas[area] || '';
+                    // 쉼표나 줄바꿈이 있을 경우를 대비해 쌍따옴표 래핑
+                    val = `"${val.replace(/"/g, '""')}"`;
+                    row.push(val);
+                });
+                csvContent += row.join(',') + "\n";
+            });
+
+            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            link.setAttribute("href", url);
+            link.setAttribute("download", "단계_평가결과.csv");
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // 엑셀 다운로드 로직
+        function downloadExcel() {
+            if (transformedData.students.length === 0) return;
+
+            // 1. 시트용 데이터 배열 생성
+            let ws_data = [];
+            
+            // 헤더 행
+            let headerRow = ["번호", "성명", ...transformedData.areas];
+            ws_data.push(headerRow);
+
+            // 데이터 행
+            transformedData.students.forEach(student => {
+                let row = [student.no, student.name];
+                transformedData.areas.forEach(area => {
+                    row.push(student.areas[area] || '');
+                });
+                ws_data.push(row);
+            });
+
+            // 2. 워크시트 및 워크북 생성
+            const ws = XLSX.utils.aoa_to_sheet(ws_data);
+            
+            // (선택) 열 너비 보기 좋게 조절
+            const wscols = [
+                {wch: 8},  // 번호
+                {wch: 12}, // 성명
+                ...transformedData.areas.map(() => ({wch: 15})) // 영역
+            ];
+            ws['!cols'] = wscols;
+
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "평가결과");
+
+            // 3. 엑셀 파일 생성 및 다운로드 (SheetJS 기능)
+            XLSX.writeFile(wb, "단계_평가결과.xlsx");
+        }
+
+        // 이벤트 리스너 등록
+        document.getElementById('fileInput').addEventListener('change', processFile);
+        document.getElementById('downloadCsvBtn').addEventListener('click', downloadCSV);
+        document.getElementById('downloadExcelBtn').addEventListener('click', downloadExcel);
+    </script>
+</body>
+</html>
