@@ -1,286 +1,462 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>학생 평가결과 데이터 변환기</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.292.0/lucide.min.css" rel="stylesheet">
-    <!-- SheetJS 라이브러리 추가 (엑셀 파일 읽기 용도) -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>교과평가 변환기</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --paper: #fbfaf7;
+    --card: #ffffff;
+    --ink: #1c2536;
+    --ink-soft: #5b6478;
+    --line: #dfe2ea;
+    --line-soft: #edeff4;
+    --blue: #2c4a7c;
+    --blue-soft: #eef2f9;
+    --stamp: #b23b2e;
+    --gold: #c69a4a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, "Malgun Gothic", "Apple SD Gothic Neo", "Segoe UI", sans-serif;
+  }
+  body {
+    min-height: 100vh;
+    padding: 48px 20px 80px;
+  }
+  .page {
+    max-width: 760px;
+    margin: 0 auto;
+  }
+
+  /* ---- Header ---- */
+  .eyebrow {
+    font-family: Georgia, "Nanum Myeongjo", serif;
+    font-size: 12px;
+    letter-spacing: 0.24em;
+    text-transform: uppercase;
+    color: var(--gold);
+    margin: 0 0 10px 0;
+  }
+  h1 {
+    font-family: Georgia, "Nanum Myeongjo", serif;
+    font-size: 27px;
+    font-weight: 700;
+    line-height: 1.35;
+    margin: 0 0 8px 0;
+    color: var(--ink);
+  }
+  .lede {
+    font-size: 14px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+    margin: 0 0 36px 0;
+    max-width: 52ch;
+  }
+
+  /* ---- Upload slot ---- */
+  .slot {
+    position: relative;
+    border: 1.5px dashed #b9c2d4;
+    border-radius: 4px;
+    background: var(--card);
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .slot::before {
+    content: "";
+    position: absolute;
+    top: 10px; left: 10px; right: 10px; bottom: 10px;
+    border: 1px solid var(--line-soft);
+    border-radius: 2px;
+    pointer-events: none;
+  }
+  .slot:hover, .slot.drag {
+    border-color: var(--blue);
+    background: var(--blue-soft);
+  }
+  .slot .icon {
+    font-size: 26px;
+    margin-bottom: 12px;
+    color: var(--blue);
+  }
+  .slot .title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .slot .hint {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .slot input { display: none; }
+  .filename-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 6px 12px;
+    background: var(--blue-soft);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    font-size: 12.5px;
+    color: var(--blue);
+    font-weight: 600;
+  }
+
+  /* ---- Status / error ---- */
+  .status {
+    margin-top: 14px;
+    font-size: 13px;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.error { color: var(--stamp); }
+  .status.working { color: var(--ink-soft); }
+
+  /* ---- Results ---- */
+  .results {
+    margin-top: 44px;
+    display: none;
+  }
+  .results.show { display: block; }
+
+  .result-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 16px;
+    border-bottom: 2px solid var(--ink);
+    padding-bottom: 10px;
+  }
+  .result-head h2 {
+    font-family: Georgia, "Nanum Myeongjo", serif;
+    font-size: 17px;
+    margin: 0;
+  }
+  .result-head .n {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  thead th {
+    background: var(--ink);
+    color: #fff;
+    font-weight: 600;
+    padding: 10px 8px;
+    text-align: center;
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+  }
+  tbody td {
+    border-bottom: 1px solid var(--line-soft);
+    padding: 9px 8px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+  }
+  tbody tr:hover td { background: var(--blue-soft); }
+  td.name { text-align: left; font-weight: 600; padding-left: 14px; }
+  td.grade { color: var(--blue); font-weight: 600; }
+  td.grade.low { color: var(--stamp); }
+
+  .toolbar {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+  }
+  button {
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 10px 18px;
+    border-radius: 3px;
+    border: 1px solid var(--ink);
+    background: var(--ink);
+    color: #fff;
+    cursor: pointer;
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--ink);
+  }
+  button:hover { opacity: 0.85; }
+
+  /* ---- Stamp ---- */
+  .stamp {
+    position: absolute;
+    top: 18px;
+    right: 18px;
+    width: 64px;
+    height: 64px;
+    border: 2.5px solid var(--stamp);
+    border-radius: 50%;
+    color: var(--stamp);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Georgia, "Nanum Myeongjo", serif;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 0.05em;
+    transform: rotate(-14deg) scale(0);
+    opacity: 0;
+    pointer-events: none;
+    transition: transform 0.4s cubic-bezier(.34,1.56,.64,1), opacity 0.3s;
+  }
+  .stamp.show { transform: rotate(-14deg) scale(1); opacity: 0.92; }
+  .slot { position: relative; overflow: visible; }
+
+  .notice {
+    margin-top: 36px;
+    padding: 14px 16px;
+    border-left: 3px solid var(--gold);
+    background: #fbf7ee;
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+    display: none;
+  }
+  .notice.show { display: block; }
+
+  @media (max-width: 520px) {
+    h1 { font-size: 22px; }
+    .result-head { flex-direction: column; align-items: flex-start; gap: 4px; }
+  }
+</style>
 </head>
-<body class="bg-slate-50 min-h-screen p-6 font-sans">
-    <div class="max-w-4xl mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 p-8">
-        <h1 class="text-2xl font-bold text-slate-800 mb-2">학생 교과평가 변환기</h1>
-        <p class="text-slate-500 mb-8">나이스(NEIS) 양식 등에 맞게 여러 줄로 나뉜 평가 데이터를 한 줄로 합쳐줍니다.</p>
+<body>
+<div class="page">
+  <p class="eyebrow">Grade Report Converter</p>
+  <h1>교과평가 결과표 변환기</h1>
+  <p class="lede">나이스에서 내려받은 교과평가(교과별) 원본 엑셀 파일을 올리면, 페이지마다 잘려있던 학생별 평가결과를 한 줄짜리 표로 자동 정리해 드립니다.</p>
 
-        <!-- 업로드 섹션 -->
-        <div class="mb-8 p-6 border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 text-center">
-            <label class="block mb-4">
-                <span class="sr-only">엑셀 파일 선택</span>
-                <input type="file" id="fileInput" accept=".xlsx, .xls" class="block w-full text-sm text-slate-500
-                    file:mr-4 file:py-2.5 file:px-6
-                    file:rounded-full file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-blue-50 file:text-blue-700
-                    hover:file:bg-blue-100 cursor-pointer
-                "/>
-            </label>
-            <div class="flex items-center justify-center gap-4 text-sm text-slate-600">
-                <span class="text-slate-500">※ 나이스에서 다운로드한 원본 엑셀(.xlsx) 파일을 그대로 올려주세요.</span>
-            </div>
-        </div>
+  <div class="slot" id="dropSlot">
+    <div class="icon">⇪</div>
+    <div class="title">엑셀 파일을 이곳에 놓거나 클릭해서 선택하세요</div>
+    <div class="hint">.xlsx 파일 · 나이스 교과평가(교과별) 출력 형식</div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls">
+    <div id="fileTag"></div>
+    <div class="stamp" id="stamp">변환<br>완료</div>
+  </div>
 
-        <!-- 결과 미리보기 섹션 -->
-        <div id="resultSection" class="hidden">
-            <div class="flex justify-between items-end mb-4">
-                <h2 class="text-lg font-semibold text-slate-800">변환 미리보기</h2>
-                <div class="flex gap-2">
-                    <button id="downloadCsvBtn" class="bg-slate-600 hover:bg-slate-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm">
-                        CSV 다운로드
-                    </button>
-                    <button id="downloadExcelBtn" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg font-medium transition-colors shadow-sm text-sm">
-                        엑셀(XLSX) 다운로드
-                    </button>
-                </div>
-            </div>
-            <div class="overflow-x-auto border border-slate-200 rounded-lg">
-                <table class="w-full text-sm text-left text-slate-600">
-                    <thead class="text-xs text-slate-700 uppercase bg-slate-100 border-b border-slate-200" id="previewHead">
-                        <!-- 헤더가 동적으로 생성됩니다 -->
-                    </thead>
-                    <tbody id="previewBody" class="divide-y divide-slate-200">
-                        <!-- 데이터가 여기에 렌더링 됩니다 -->
-                    </tbody>
-                </table>
-            </div>
-        </div>
+  <div class="status" id="status"></div>
+
+  <div class="results" id="results">
+    <div class="result-head">
+      <h2 id="resultTitle">변환 결과</h2>
+      <span class="n" id="resultCount"></span>
     </div>
+    <table id="resultTable">
+      <thead>
+        <tr>
+          <th style="width:12%">번호</th>
+          <th style="width:24%">성명</th>
+          <th>표현 1</th>
+          <th>표현 2</th>
+          <th>이해 1</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <div class="toolbar">
+      <button onclick="downloadCSV()">CSV로 저장</button>
+      <button class="ghost" onclick="downloadXLSX()">XLSX로 저장</button>
+      <button class="ghost" onclick="resetApp()">다른 파일 변환</button>
+    </div>
+  </div>
 
-    <script>
-        let transformedData = { students: [], areas: [] };
+  <div class="notice" id="notice">
+    원본 파일은 인쇄용으로 학생마다 페이지가 나뉘어 있어, 문장 중간에서 잘리는 항목이 있습니다.
+    이 도구는 <b>번호·성명이 새로 나오는 지점</b>과 <b>영역(표현/이해)의 등급 값</b>만 기준으로 삼아 자동으로 이어붙이므로,
+    변환 후에는 반드시 원본과 몇 명을 대조해 확인해 주세요.
+  </div>
+</div>
 
-        // 파일 처리 로직 (SheetJS 사용)
-        function processFile() {
-            const fileInput = document.getElementById('fileInput');
-            
-            if (!fileInput.files.length) return;
-            const file = fileInput.files[0];
+<script>
+let currentData = [];
+let currentFileBase = "평가결과";
 
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const data = new Uint8Array(e.target.result);
-                // 엑셀 파일 읽기
-                const workbook = XLSX.read(data, {type: 'array'});
-                
-                // 첫 번째 시트 선택
-                const firstSheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[firstSheetName];
-                
-                // 시트 데이터를 2차원 배열로 변환 (빈 셀은 빈 문자열로 처리)
-                const rows = XLSX.utils.sheet_to_json(worksheet, {header: 1, defval: ""});
-                
-                let studentsMap = new Map();
-                let headerAreas = [];
-                
-                let currentNo = "";
-                let currentName = "";
-                let currentArea = "";
-                let startParsing = false;
-                let studentAreaIndex = 0; // 한 학생의 몇 번째 평가 줄인지 추적
+const slot = document.getElementById('dropSlot');
+const fileInput = document.getElementById('fileInput');
+const statusEl = document.getElementById('status');
+const resultsEl = document.getElementById('results');
+const fileTag = document.getElementById('fileTag');
+const stampEl = document.getElementById('stamp');
+const noticeEl = document.getElementById('notice');
 
-                for (let i = 0; i < rows.length; i++) {
-                    const row = rows[i];
-                    if (!row || row.length === 0) continue;
+slot.addEventListener('click', () => fileInput.click());
+slot.addEventListener('dragover', e => { e.preventDefault(); slot.classList.add('drag'); });
+slot.addEventListener('dragleave', () => slot.classList.remove('drag'));
+slot.addEventListener('drop', e => {
+  e.preventDefault();
+  slot.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
 
-                    let col0 = row[0] != null ? String(row[0]).replace(/\s/g, '') : "";
-                    if (col0.includes('반/번호')) {
-                        startParsing = true;
-                        continue;
-                    }
+function setStatus(msg, type) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status show' + (type ? ' ' + type : '');
+}
+function clearStatus() {
+  statusEl.className = 'status';
+  statusEl.textContent = '';
+}
 
-                    if (!startParsing) continue;
-                    
-                    let no = row[0] != null ? String(row[0]).trim() : "";
-                    let name = row[1] != null ? String(row[1]).trim() : "";
-                    let area = row[2] != null ? String(row[2]).trim() : "";
-                    let level = row[5] != null ? String(row[5]).trim() : ""; // 인덱스 5번이 '단계' 열 (매우잘함, 잘함 등)
-                    
-                    // 셀 병합으로 인해 번호/이름이 비어있는 행이 있더라도 이전 값을 유지하여 엇갈림 방지
-                    if (no !== "") currentNo = no;
-                    if (name !== "") currentName = name;
-                    
-                    // 영역 병합 대응
-                    if (area !== "") currentArea = area;
-                    
-                    // 빈 행(단순 여백) 무시
-                    let isRowEmpty = no === "" && name === "" && area === "" && (row[3] == null || String(row[3]).trim() === "") && level === "";
-                    if (isRowEmpty) continue;
+function handleFile(file) {
+  resultsEl.classList.remove('show');
+  stampEl.classList.remove('show');
+  noticeEl.classList.remove('show');
+  fileTag.innerHTML = `<div class="filename-tag">📄 ${file.name}</div>`;
+  currentFileBase = file.name.replace(/\.(xlsx|xls)$/i, '') || '평가결과';
+  setStatus('파일을 읽는 중입니다…', 'working');
 
-                    // 유효한 학생 데이터가 파악되었을 때
-                    if (currentNo && currentName) {
-                        let studentKey = currentNo + "_" + currentName;
-                        
-                        if (!studentsMap.has(studentKey)) {
-                            studentsMap.set(studentKey, { no: currentNo, name: currentName, levels: [] });
-                        }
+  const reader = new FileReader();
+  reader.onload = evt => {
+    try {
+      const data = new Uint8Array(evt.target.result);
+      const wb = XLSX.read(data, { type: 'array' });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
+      const parsed = parseReport(rows);
+      if (parsed.length === 0) {
+        setStatus('학생 평가 데이터를 찾지 못했습니다. 나이스 교과평가(교과별) 출력 형식의 파일인지 확인해 주세요.', 'error');
+        return;
+      }
+      currentData = parsed;
+      renderResults(parsed);
+      clearStatus();
+      stampEl.classList.add('show');
+      noticeEl.classList.add('show');
+    } catch (err) {
+      console.error(err);
+      setStatus('파일을 읽는 중 오류가 발생했습니다: ' + err.message, 'error');
+    }
+  };
+  reader.onerror = () => setStatus('파일을 읽을 수 없습니다.', 'error');
+  reader.readAsArrayBuffer(file);
+}
 
-                        // 번호/이름이 적혀있는 줄이라면(새로운 학생의 시작줄) 인덱스 0으로 초기화
-                        if (no !== "" && name !== "") {
-                            studentAreaIndex = 0;
-                        }
-                        
-                        let student = studentsMap.get(studentKey);
-                        
-                        // 헤더(영역) 등록 (순서대로 나열하여 여러 평가를 모두 포용)
-                        if (headerAreas.length <= studentAreaIndex) {
-                            headerAreas.push(currentArea || `영역${studentAreaIndex + 1}`);
-                        }
-                        
-                        // 단계 기록
-                        student.levels[studentAreaIndex] = level;
-                        studentAreaIndex++;
-                    }
-                }
+// Mirrors the page-split parsing logic used for the NEIS 교과평가(교과별) export:
+// student number/name only appear once per record, area repeats, and long text
+// wrapped across print-page boundaries leaves the 단계(등급) cell blank on
+// continuation rows — so we key on non-blank 단계 values only.
+function parseReport(rows) {
+  const students = {};
+  const order = [];
+  let curNum = null, curName = null, curArea = null;
 
-                // 중복되는 영역 이름(예: 표현, 표현)이 있을 경우 "표현 1", "표현 2" 등으로 번호 부여
-                let finalHeaders = headerAreas.map((area, idx) => {
-                    let count = headerAreas.filter(a => a === area).length;
-                    if (count > 1) {
-                        let occurrence = headerAreas.slice(0, idx + 1).filter(a => a === area).length;
-                        return `${area} ${occurrence}`;
-                    }
-                    return area;
-                });
+  for (const row of rows) {
+    const num = row[0], name = row[1], area = row[2], criterion = row[3], level = row[5];
 
-                transformedData = {
-                    students: Array.from(studentsMap.values()),
-                    areas: finalHeaders
-                };
+    if (typeof num === 'number') {
+      curNum = num;
+      curName = name;
+    }
+    if (area === '표현' || area === '이해') {
+      curArea = area;
+    }
+    if (curNum === null) continue;
+    if (level === null || level === undefined) continue;
 
-                renderPreview();
-            };
-            
-            reader.readAsArrayBuffer(file); // 엑셀 파일은 ArrayBuffer로 읽어야 함
-        }
+    const levelStr = String(level).trim();
+    if (levelStr === '' || levelStr === '/' || levelStr === '단계') continue;
+    if (name === '성명' || criterion === '성취기준') continue;
 
-        // 미리보기 테이블 렌더링
-        function renderPreview() {
-            const thead = document.getElementById('previewHead');
-            const tbody = document.getElementById('previewBody');
-            
-            // 헤더 동적 생성
-            let headerHTML = `
-                <tr>
-                    <th scope="col" class="px-4 py-3 whitespace-nowrap">번호</th>
-                    <th scope="col" class="px-4 py-3 whitespace-nowrap">성명</th>
-            `;
-            transformedData.areas.forEach(area => {
-                headerHTML += `<th scope="col" class="px-4 py-3">${area}</th>`;
-            });
-            headerHTML += `</tr>`;
-            thead.innerHTML = headerHTML;
+    if (!(curNum in students)) {
+      students[curNum] = { name: curName, 표현: [], 이해: [] };
+      order.push(curNum);
+    }
+    if (curArea === '표현' || curArea === '이해') {
+      students[curNum][curArea].push(levelStr);
+    }
+  }
 
-            // 바디 동적 생성
-            tbody.innerHTML = '';
-            transformedData.students.forEach(student => {
-                const tr = document.createElement('tr');
-                tr.className = 'hover:bg-slate-50';
-                
-                let rowHTML = `
-                    <td class="px-4 py-3 font-medium text-slate-900">${student.no}</td>
-                    <td class="px-4 py-3 font-medium text-slate-900">${student.name}</td>
-                `;
-                
-                // 데이터 순서(인덱스)에 맞춰 매핑하여 중복 데이터 유실 방지
-                transformedData.areas.forEach((area, index) => {
-                    const levelVal = student.levels[index] || '';
-                    rowHTML += `<td class="px-4 py-3">${levelVal}</td>`;
-                });
-                
-                tr.innerHTML = rowHTML;
-                tbody.appendChild(tr);
-            });
+  return order.map(num => {
+    const s = students[num];
+    return {
+      '번호': num,
+      '성명': s.name,
+      '표현 1': s.표현[0] || '',
+      '표현 2': s.표현[1] || '',
+      '이해 1': s.이해[0] || ''
+    };
+  });
+}
 
-            document.getElementById('resultSection').classList.remove('hidden');
-        }
+function renderResults(data) {
+  const tbody = document.getElementById('tbody');
+  const lowGrades = new Set(['노력요함', '보통']);
+  tbody.innerHTML = data.map(r => `
+    <tr>
+      <td>${r['번호']}</td>
+      <td class="name">${r['성명']}</td>
+      <td class="grade ${lowGrades.has(r['표현 1']) ? 'low' : ''}">${r['표현 1']}</td>
+      <td class="grade ${lowGrades.has(r['표현 2']) ? 'low' : ''}">${r['표현 2']}</td>
+      <td class="grade ${lowGrades.has(r['이해 1']) ? 'low' : ''}">${r['이해 1']}</td>
+    </tr>
+  `).join('');
+  document.getElementById('resultCount').textContent = `총 ${data.length}명`;
+  resultsEl.classList.add('show');
+}
 
-        // 다운로드 로직
-        function downloadCSV() {
-            if (transformedData.students.length === 0) return;
+function downloadCSV() {
+  if (!currentData.length) return;
+  const headers = ['번호','성명','표현 1','표현 2','이해 1'];
+  const rows = [headers.join(',')];
+  currentData.forEach(r => {
+    rows.push(headers.map(h => `"${String(r[h]).replace(/"/g,'""')}"`).join(','));
+  });
+  const csvContent = "\uFEFF" + rows.join('\r\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  triggerDownload(blob, currentFileBase + '_변환결과.csv');
+}
 
-            // 엑셀 한글 깨짐 방지용 BOM 추가
-            let csvContent = "\uFEFF"; 
-            
-            // 헤더 행 작성 (영역 개수에 맞춰 동적 생성)
-            let headerRow = ["번호", "성명", ...transformedData.areas];
-            csvContent += headerRow.join(',') + "\n";
+function downloadXLSX() {
+  if (!currentData.length) return;
+  const headers = ['번호','성명','표현 1','표현 2','이해 1'];
+  const ws = XLSX.utils.json_to_sheet(currentData, { header: headers });
+  ws['!cols'] = [{wch:8},{wch:12},{wch:14},{wch:14},{wch:14}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '평가결과');
+  XLSX.writeFile(wb, currentFileBase + '_변환결과.xlsx');
+}
 
-            // 데이터 행 작성
-            transformedData.students.forEach(student => {
-                let row = [student.no, student.name];
-                transformedData.areas.forEach((area, index) => {
-                    let val = student.levels[index] || '';
-                    // 쉼표나 줄바꿈이 있을 경우를 대비해 쌍따옴표 래핑
-                    val = `"${val.replace(/"/g, '""')}"`;
-                    row.push(val);
-                });
-                csvContent += row.join(',') + "\n";
-            });
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
-            const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-            const url = URL.createObjectURL(blob);
-            const link = document.createElement("a");
-            
-            link.setAttribute("href", url);
-            link.setAttribute("download", "단계_평가결과.csv");
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-        }
-
-        // 엑셀 다운로드 로직
-        function downloadExcel() {
-            if (transformedData.students.length === 0) return;
-
-            // 1. 시트용 데이터 배열 생성
-            let ws_data = [];
-            
-            // 헤더 행
-            let headerRow = ["번호", "성명", ...transformedData.areas];
-            ws_data.push(headerRow);
-
-            // 데이터 행
-            transformedData.students.forEach(student => {
-                let row = [student.no, student.name];
-                transformedData.areas.forEach((area, index) => {
-                    row.push(student.levels[index] || '');
-                });
-                ws_data.push(row);
-            });
-
-            // 2. 워크시트 및 워크북 생성
-            const ws = XLSX.utils.aoa_to_sheet(ws_data);
-            
-            // (선택) 열 너비 보기 좋게 조절
-            const wscols = [
-                {wch: 8},  // 번호
-                {wch: 12}, // 성명
-                ...transformedData.areas.map(() => ({wch: 15})) // 영역
-            ];
-            ws['!cols'] = wscols;
-
-            const wb = XLSX.utils.book_new();
-            XLSX.utils.book_append_sheet(wb, ws, "평가결과");
-
-            // 3. 엑셀 파일 생성 및 다운로드 (SheetJS 기능)
-            XLSX.writeFile(wb, "단계_평가결과.xlsx");
-        }
-
-        // 이벤트 리스너 등록
-        document.getElementById('fileInput').addEventListener('change', processFile);
-        document.getElementById('downloadCsvBtn').addEventListener('click', downloadCSV);
-        document.getElementById('downloadExcelBtn').addEventListener('click', downloadExcel);
-    </script>
+function resetApp() {
+  currentData = [];
+  fileInput.value = '';
+  fileTag.innerHTML = '';
+  resultsEl.classList.remove('show');
+  stampEl.classList.remove('show');
+  noticeEl.classList.remove('show');
+  clearStatus();
+}
+</script>
 </body>
 </html>
