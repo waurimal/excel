@@ -241,7 +241,7 @@
 <div class="page">
   <p class="eyebrow">Grade Report Converter</p>
   <h1>교과평가 결과표 변환기</h1>
-  <p class="lede">나이스에서 내려받은 교과평가(교과별) 원본 엑셀 파일을 올리면, 페이지마다 잘려있던 학생별 평가결과를 한 줄짜리 표로 자동 정리해 드립니다.</p>
+  <p class="lede">나이스에서 내려받은 교과평가(교과별) 원본 엑셀 파일을 올리면, 첫 번째 학생의 영역 구성을 기준으로 표 형식을 자동으로 만들어 페이지마다 잘려있던 평가결과를 한 줄짜리 표로 정리해 드립니다. 영역명과 영역별 반복 횟수는 파일마다 달라도 됩니다.</p>
 
   <div class="slot" id="dropSlot">
     <div class="icon">⇪</div>
@@ -260,15 +260,7 @@
       <span class="n" id="resultCount"></span>
     </div>
     <table id="resultTable">
-      <thead>
-        <tr>
-          <th style="width:12%">번호</th>
-          <th style="width:24%">성명</th>
-          <th>표현 1</th>
-          <th>표현 2</th>
-          <th>이해 1</th>
-        </tr>
-      </thead>
+      <thead id="thead"></thead>
       <tbody id="tbody"></tbody>
     </table>
     <div class="toolbar">
@@ -280,13 +272,16 @@
 
   <div class="notice" id="notice">
     원본 파일은 인쇄용으로 학생마다 페이지가 나뉘어 있어, 문장 중간에서 잘리는 항목이 있습니다.
-    이 도구는 <b>번호·성명이 새로 나오는 지점</b>과 <b>영역(표현/이해)의 등급 값</b>만 기준으로 삼아 자동으로 이어붙이므로,
+    이 도구는 <b>번호·성명이 새로 나오는 지점</b>과 <b>영역의 등급 값</b>만 기준으로 삼아 자동으로 이어붙이고,
+    <b>첫 번째 학생의 영역 순서·개수</b>를 표의 열 구성으로 사용합니다.
+    만약 특정 학생만 영역 일부가 누락되어 있다면 해당 칸은 빈 값으로 표시되니,
     변환 후에는 반드시 원본과 몇 명을 대조해 확인해 주세요.
   </div>
 </div>
 
 <script>
 let currentData = [];
+let currentColumns = [];   // [{label}, ...] in display order, after 번호/성명
 let currentFileBase = "평가결과";
 
 const slot = document.getElementById('dropSlot');
@@ -329,17 +324,18 @@ function handleFile(file) {
   const reader = new FileReader();
   reader.onload = evt => {
     try {
-      const data = new Uint8Array(evt.target.result);
-      const wb = XLSX.read(data, { type: 'array' });
+      const fileBytes = new Uint8Array(evt.target.result);
+      const wb = XLSX.read(fileBytes, { type: 'array' });
       const sheet = wb.Sheets[wb.SheetNames[0]];
       const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, raw: true, defval: null });
-      const parsed = parseReport(rows);
-      if (parsed.length === 0) {
+      const { data, columns } = parseReport(rows);
+      if (data.length === 0) {
         setStatus('학생 평가 데이터를 찾지 못했습니다. 나이스 교과평가(교과별) 출력 형식의 파일인지 확인해 주세요.', 'error');
         return;
       }
-      currentData = parsed;
-      renderResults(parsed);
+      currentData = data;
+      currentColumns = columns;
+      renderResults(data, columns);
       clearStatus();
       stampEl.classList.add('show');
       noticeEl.classList.add('show');
@@ -352,11 +348,13 @@ function handleFile(file) {
   reader.readAsArrayBuffer(file);
 }
 
-// Mirrors the page-split parsing logic used for the NEIS 교과평가(교과별) export:
-// student number/name only appear once per record, area repeats, and long text
-// wrapped across print-page boundaries leaves the 단계(등급) cell blank on
-// continuation rows — so we key on non-blank 단계 values only.
-function parseReport(rows) {
+// Mirrors the page-split structure of the NEIS 교과평가(교과별) export:
+// student number/name only appear once per record, 영역(area) repeats, and long
+// text wrapped across print-page boundaries leaves the 단계(등급) cell blank on
+// continuation rows — so we key on non-blank 단계 values only. Area names and
+// how many times each area repeats can vary by grade/subject, so instead of
+// hardcoding 표현/이해 we detect the column schema from the first student.
+function extractStudents(rows) {
   const students = {};
   const order = [];
   let curNum = null, curName = null, curArea = null;
@@ -368,8 +366,8 @@ function parseReport(rows) {
       curNum = num;
       curName = name;
     }
-    if (area === '표현' || area === '이해') {
-      curArea = area;
+    if (typeof area === 'string' && area.trim() !== '') {
+      curArea = area.trim();
     }
     if (curNum === null) continue;
     if (level === null || level === undefined) continue;
@@ -377,50 +375,109 @@ function parseReport(rows) {
     const levelStr = String(level).trim();
     if (levelStr === '' || levelStr === '/' || levelStr === '단계') continue;
     if (name === '성명' || criterion === '성취기준') continue;
+    if (curArea === null || curArea === '영역') continue;
 
     if (!(curNum in students)) {
-      students[curNum] = { name: curName, 표현: [], 이해: [] };
+      students[curNum] = { name: curName, entries: [] };
       order.push(curNum);
     }
-    if (curArea === '표현' || curArea === '이해') {
-      students[curNum][curArea].push(levelStr);
-    }
+    students[curNum].entries.push({ area: curArea, level: levelStr });
   }
 
-  return order.map(num => {
-    const s = students[num];
+  return order.map(num => ({ num, name: students[num].name, entries: students[num].entries }));
+}
+
+// Build column schema (area labels, numbered only when an area repeats)
+// from the first student's entry sequence.
+function buildColumns(firstStudentEntries) {
+  const totalPerArea = {};
+  firstStudentEntries.forEach(e => { totalPerArea[e.area] = (totalPerArea[e.area] || 0) + 1; });
+
+  const seenSoFar = {};
+  return firstStudentEntries.map(e => {
+    seenSoFar[e.area] = (seenSoFar[e.area] || 0) + 1;
+    const occ = seenSoFar[e.area];
     return {
-      '번호': num,
-      '성명': s.name,
-      '표현 1': s.표현[0] || '',
-      '표현 2': s.표현[1] || '',
-      '이해 1': s.이해[0] || ''
+      area: e.area,
+      occ,
+      label: totalPerArea[e.area] > 1 ? `${e.area} ${occ}` : e.area
     };
   });
 }
 
-function renderResults(data) {
+function parseReport(rows) {
+  const students = extractStudents(rows);
+  if (students.length === 0) return { data: [], columns: [] };
+
+  const columns = buildColumns(students[0].entries);
+
+  const data = students.map(s => {
+    // group this student's entries by area, preserving order within each area
+    const byArea = {};
+    s.entries.forEach(e => {
+      if (!byArea[e.area]) byArea[e.area] = [];
+      byArea[e.area].push(e.level);
+    });
+    const row = { '번호': s.num, '성명': s.name };
+    columns.forEach(col => {
+      const vals = byArea[col.area] || [];
+      row[col.label] = vals[col.occ - 1] || '';
+    });
+    return row;
+  });
+
+  return { data, columns };
+}
+
+const LOW_GRADES = new Set(['노력요함', '보통', '미흡']);
+
+function renderResults(data, columns) {
+  const thead = document.getElementById('thead');
   const tbody = document.getElementById('tbody');
-  const lowGrades = new Set(['노력요함', '보통']);
+
+  const fixedWidth = 12;
+  const nameWidth = 20;
+  const colWidth = ((100 - fixedWidth - nameWidth) / Math.max(columns.length, 1)).toFixed(1);
+
+  thead.innerHTML = `
+    <tr>
+      <th style="width:${fixedWidth}%">번호</th>
+      <th style="width:${nameWidth}%">성명</th>
+      ${columns.map(c => `<th style="width:${colWidth}%">${escapeHtml(c.label)}</th>`).join('')}
+    </tr>
+  `;
+
   tbody.innerHTML = data.map(r => `
     <tr>
       <td>${r['번호']}</td>
-      <td class="name">${r['성명']}</td>
-      <td class="grade ${lowGrades.has(r['표현 1']) ? 'low' : ''}">${r['표현 1']}</td>
-      <td class="grade ${lowGrades.has(r['표현 2']) ? 'low' : ''}">${r['표현 2']}</td>
-      <td class="grade ${lowGrades.has(r['이해 1']) ? 'low' : ''}">${r['이해 1']}</td>
+      <td class="name">${escapeHtml(r['성명'])}</td>
+      ${columns.map(c => {
+        const v = r[c.label] || '';
+        return `<td class="grade ${LOW_GRADES.has(v) ? 'low' : ''}">${escapeHtml(v)}</td>`;
+      }).join('')}
     </tr>
   `).join('');
-  document.getElementById('resultCount').textContent = `총 ${data.length}명`;
+
+  document.getElementById('resultCount').textContent = `총 ${data.length}명 · 항목 ${columns.length}개`;
   resultsEl.classList.add('show');
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[c]));
+}
+
+function getHeaders() {
+  return ['번호', '성명', ...currentColumns.map(c => c.label)];
 }
 
 function downloadCSV() {
   if (!currentData.length) return;
-  const headers = ['번호','성명','표현 1','표현 2','이해 1'];
+  const headers = getHeaders();
   const rows = [headers.join(',')];
   currentData.forEach(r => {
-    rows.push(headers.map(h => `"${String(r[h]).replace(/"/g,'""')}"`).join(','));
+    rows.push(headers.map(h => `"${String(r[h] ?? '').replace(/"/g,'""')}"`).join(','));
   });
   const csvContent = "\uFEFF" + rows.join('\r\n');
   const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -429,9 +486,9 @@ function downloadCSV() {
 
 function downloadXLSX() {
   if (!currentData.length) return;
-  const headers = ['번호','성명','표현 1','표현 2','이해 1'];
+  const headers = getHeaders();
   const ws = XLSX.utils.json_to_sheet(currentData, { header: headers });
-  ws['!cols'] = [{wch:8},{wch:12},{wch:14},{wch:14},{wch:14}];
+  ws['!cols'] = headers.map((h, i) => ({ wch: i < 2 ? 12 : 14 }));
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '평가결과');
   XLSX.writeFile(wb, currentFileBase + '_변환결과.xlsx');
@@ -450,6 +507,7 @@ function triggerDownload(blob, filename) {
 
 function resetApp() {
   currentData = [];
+  currentColumns = [];
   fileInput.value = '';
   fileTag.innerHTML = '';
   resultsEl.classList.remove('show');
